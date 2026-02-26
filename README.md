@@ -1,106 +1,146 @@
-
 # Leaf: Multiple-Choice Question Generation
 
-Easy to use and understand multiple-choice question generation algorithm using  [T5 Transformers](https://ai.googleblog.com/2020/02/exploring-transfer-learning-with-t5.html).  The application accepts a short passage of text and uses two fine-tuned T5 Transformer models to first generate multiple **question-answer pairs** corresponding to the given text, after which it uses them to generate ***distractors***  -  additional options used to confuse the test taker.
+Hệ thống tự động sinh câu hỏi trắc nghiệm từ đoạn văn bản, sử dụng hai mô hình **T5 Transformer** fine-tuned kết hợp sense2vec. Được chấp nhận là demo paper tại **[ECIR 2022](https://ecir2022.org/)** — paper: [arXiv:2201.09012](https://arxiv.org/abs/2201.09012).
 
+- **Video demo:** [YouTube](https://www.youtube.com/watch?v=tpxl-UnfmQc)
+- **Hỗ trợ ngôn ngữ:** Tiếng Anh (T5 trực tiếp) · Tiếng Việt (tự động phát hiện, dịch → sinh → dịch ngược)
 
+![question generation process](https://i.ibb.co/fQwPZZv/qg-process.jpg)
 
-![question generation process](https://i.ibb.co/fQwPZZv/qg-process.jpg "question generation process")
+---
 
-Originally inspired by a Bachelor's machine learning course ([github link](https://github.com/KristiyanVachev/Question-Generation)) and then continued as a topic for my Master's thesis at Sofia University, Bulgaria. 
+## Cách hoạt động
 
-## ECIR 2022 Demonstration paper
-This work has been accepted as a demo paper for the [ECIR 2022 conference.](https://ecir2022.org/) 
+| Bước | Mô hình | Dataset huấn luyện |
+|------|---------|-------------------|
+| Sinh cặp câu hỏi – đáp án | T5 fine-tuned | SQuAD 1.1 |
+| Sinh 3 phương án nhiễu | T5 fine-tuned + sense2vec | RACE (~100k câu hỏi) |
 
-**Video demonstration:** [here](https://www.youtube.com/watch?v=tpxl-UnfmQc)
+Mỗi câu hỏi đầu ra luôn có **đúng 4 đáp án** (1 đúng + 3 sai). Nếu input là tiếng Việt, hệ thống tự động dịch sang tiếng Anh trước khi xử lý, sau đó dịch kết quả ngược lại.
 
-**Live demo:** *coming soon*
+---
 
-**Paper:** [here](https://arxiv.org/abs/2201.09012)
+## Cấu trúc dự án
 
-*Abstract:*
-Testing with quiz questions has proven to be an effective strategy for better educational processes. However, manually creating quizzes is a tedious and time-consuming task.  To address this challenge, we present Leaf, a system for generating multiple-choice questions from factual text. In addition to being very well suited for classroom settings, Leaf could be also used in an industrial setup, e.g., to facilitate onboarding and knowledge sharing, or as a component of chatbots, question answering systems, or Massive Open Online Courses (MOOCs).
+```
+Leaf-Question-Generation/
+├── app/
+│   ├── ml_models/          # Các mô hình AI (QG, DG, sense2vec)
+│   ├── models/             # Data models (Question)
+│   └── modules/            # Utilities (translator, text_cleaning, ...)
+├── frontend/               # Angular web app (chạy tại localhost:4200)
+├── training/               # Notebook huấn luyện mô hình
+├── api_gateway.py          # Flask REST API (chạy tại localhost:9002)
+├── main.py                 # Chạy thử nhanh từ terminal
+└── requirements.txt
+```
 
-## Generating question and answer pairs
-To generate the question-answer pairs we have fine-tuned a T5 transformer model from [huggingface](https://huggingface.co/transformers/model_doc/t5.html) on the [SQuAD1.1. dataset](https://rajpurkar.github.io/SQuAD-explorer/) which is a reading comprehension dataset, consisting of questions posed by crowdworkers on a set of Wikipedia articles.
+---
 
-The model accepts the target answer and context as input:
+## Cài đặt
 
-    'answer' + '<sep> + 'context' 
+### Yêu cầu môi trường
+- **Python 3.8 – 3.9** (bắt buộc — torch 1.9.1 và transformers 4.3.0 không hỗ trợ Python 3.10+)
+- **Node.js 14 – 16** (Angular 8 không tương thích Node 18+)
 
-and outputs a question that answers the given answer for the corresponding text. 
+> [!WARNING]
+> Đây là dự án năm 2021–2022, sử dụng các dependency được pin ở phiên bản cũ. Việc dùng Python hoặc Node mới hơn yêu cầu sẽ gây lỗi.
 
-    'answer' + '<sep> + 'question' 
+### Bước 1 — Tạo môi trường ảo Python
 
+```bash
+python -m venv venv
+```
 
-To allow us to generate question-answer pairs without providing a target answer, we have trained the algorithm to do so when in place of the target answer the '[MASK]' token is passed. 
+Kích hoạt:
+```bash
+# Windows
+.\venv\Scripts\activate
 
-    '[MASK]' + '<sep> + 'context' 
+# Linux / macOS
+source venv/bin/activate
+```
 
-The full training script can be found in the `training` directory or accessed directly in [Google Colab](https://colab.research.google.com/drive/15GAaD-33jw81sugeBFj_Bp9GkbE_N6E1?usp=sharing). 
+### Bước 2 — Cài thư viện Python
 
+```bash
+pip install -r requirements.txt
+```
 
-## Generating incorrect options  (distractors) 
-To generate the distractors, another [T5 transformer model](https://huggingface.co/transformers/model_doc/t5.html)   has been fine-tuned. This time using the [RACE dataset](https://huggingface.co/datasets/race) which consists of more than 28,000 passages and nearly 100,000 questions. The dataset is collected from English examinations in China, which are designed for middle school and high school students.
+### Bước 3 — Tải mô hình AI
 
-The model accepts the target answer, question and context as input:
+| Mô hình | Link | Đặt vào thư mục |
+|---------|------|-----------------|
+| QA generation | [multitask-qg-ag](https://drive.google.com/file/d/1-vqF9olcYOT1hk4HgNSYEdRORq-OD5CF/view?usp=sharing) | `app/ml_models/question_generation/models/` |
+| Distractor generation | [race-distractors](https://drive.google.com/file/d/1jKdcbc_cPkOnjhDoX4jMjljMkboF-5Jv/view?usp=sharing) | `app/ml_models/distractor_generation/models/` |
+| Sense2vec | [s2v_reddit_2015_md.tar.gz](https://github.com/explosion/sense2vec/releases/download/v1.0.0/s2v_reddit_2015_md.tar.gz) — giải nén lấy thư mục `s2v_old` | `app/ml_models/sense2vec_distractor_generation/models/` |
 
-    'answer' + '<sep> + 'question' + 'context' 
+### Bước 4 — Cài dependencies Angular
 
-and outputs 3 distractors separated by the `'<sep>'` token.
+```bash
+cd frontend
+npm install
+```
 
-    'distractor1' + '<sep> + 'distractor2' + '<sep> 'distractor3' 
+---
 
+## Chạy ứng dụng
 
-The full training script can be found in the `training` directory or accessed directly in [Google Colab](https://colab.research.google.com/drive/1kWZviQVx1BbelWp0rwZX7H3GIPS7_ZrP?usp=sharing). 
+Cần mở **hai terminal riêng biệt**, chạy backend trước.
 
-To extend the variety of distractors with simple words that are not so closely related to the context, we have also used [sense2vec](https://pypi.org/project/sense2vec/) word embeddings in the cases where the T5 model does not good enough distractors. 
+### Terminal 1 — Backend (Flask API)
 
+```bash
+# Kích hoạt venv (nếu chưa)
+.\venv\Scripts\activate
 
-## Web application
-To demonstrate the algorithm, a simple Angular web application has been created. It accepts the given paragraph along with the desired number of questions and outputs each generated question with the ability to redact them (shown below). The algorithm is exposing a simple REST API using *flask* which is consumed by the web app.
+python api_gateway.py
+```
 
+Server chạy tại `http://localhost:9002`. **Giữ terminal này mở.**
 
-![question generation process](https://i.ibb.co/WFJjCgH/1-edited-fullscreen.png "Web application ")
+**API endpoint:**
 
-The code for the web application is located in a separated repository [here](https://github.com/KristiyanVachev/QGT-FrontEnd). 
+| Method | URL | Mô tả |
+|--------|-----|-------|
+| `GET` | `/` | Kiểm tra server |
+| `POST` | `/generate` | Sinh câu hỏi từ văn bản |
 
+```json
+// POST /generate — Request body
+{ "text": "Đoạn văn bản đầu vào.", "count": 5 }
+```
 
+### Terminal 2 — Frontend (Angular)
 
+```bash
+cd frontend
 
+# Node.js ≥ 16 cần thêm dòng này:
+$env:NODE_OPTIONS="--openssl-legacy-provider"   # Windows PowerShell
 
-## Installation guide
+npx ng serve
+```
 
-### Creating a virtual environment *(optional)*
-To avoid any conflicts with python packages from other projects, it is a good practice to create a [virtual environment](https://docs.python.org/3/library/venv.html) in which the packages will be installed. If you do not want to this you can skip the next commands and directly install the the requirements.txt file. 
+Giao diện web tại: `http://localhost:4200`
 
-Create a virtual environment :
+### Chạy thử nhanh từ terminal (không cần frontend)
 
-    python -m venv venv
+```bash
+python main.py
+```
 
-Enter the virtual environment:
+---
 
-*Windows:*
+## Huấn luyện mô hình
 
-    . .\venv\Scripts\activate
+Notebook có trong thư mục `training/` hoặc mở trực tiếp trên Google Colab:
 
-*Linux or MacOS*
+- [Sinh câu hỏi – đáp án](https://colab.research.google.com/drive/15GAaD-33jw81sugeBFj_Bp9GkbE_N6E1?usp=sharing)
+- [Sinh phương án nhiễu](https://colab.research.google.com/drive/1kWZviQVx1BbelWp0rwZX7H3GIPS7_ZrP?usp=sharing)
 
-    source .\venv\Scripts\activate
+---
 
-### Installing packages
+## Giấy phép
 
-    pip install -r .\requirements.txt 
-
-### Downloading data
-
-#### Question-answer model
-Download the [multitask-qg-ag model](https://drive.google.com/file/d/1-vqF9olcYOT1hk4HgNSYEdRORq-OD5CF/view?usp=sharing) checkpoint and place it in the  `app/ml_models/question_generation/models/` directory.
-
-#### Distractor generation 
-Download the [race-distractors model](https://drive.google.com/file/d/1jKdcbc_cPkOnjhDoX4jMjljMkboF-5Jv/view?usp=sharing) checkpoint and place it in the  `app/ml_models/distractor_generation/models/` directory.
-
-Download [sense2vec](https://github.com/explosion/sense2vec/releases/download/v1.0.0/s2v_reddit_2015_md.tar.gz), extract it and place the `s2v_old`  folder  and place it in the `app/ml_models/sense2vec_distractor_generation/models/` directory.
-
-## Training on your own
-The training scripts are available in the `training` directory.  You can download the notebooks directly from there or open the  [Question-Answer Generation](https://colab.research.google.com/drive/15GAaD-33jw81sugeBFj_Bp9GkbE_N6E1?usp=sharing) and [Distractor Generation](https://colab.research.google.com/drive/1kWZviQVx1BbelWp0rwZX7H3GIPS7_ZrP?usp=sharing) in Google Colab. 
+MIT License — xem file [LICENSE](LICENSE).

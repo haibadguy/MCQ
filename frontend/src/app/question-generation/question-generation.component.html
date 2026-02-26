@@ -1,0 +1,70 @@
+<div id="wrapper" class="jumbotron">
+    <hr />
+
+    <!-- <h2>Generate Questions</h2> -->
+
+    <div id="generateForm">
+        <textarea style="height: 240px; margin-bottom: 10px;" #text class="form-control" rows="6"
+            placeholder="Nhập đoạn văn bản muốn tạo câu hỏi..."></textarea>
+
+        <input style="width: 200px; height: 50px; float: left; margin-right: 10px;" #count type="number" min="1"
+            max="20" value="5" class="form-control" placeholder="Số câu hỏi (mặc định: 5)">
+        <button style="width: 990px; height: 50px; float: right;" (click)="generate(text.value, count.value)"
+            [disabled]="isLoading" type="button" class="btn btn-primary btn-lg btn-block">
+            {{ isLoading ? '⏳ Đang tạo câu hỏi... (30-60 giây)' : '⚡ Generate' }}
+        </button>
+    </div>
+
+    <!-- Loading indicator -->
+    <div *ngIf="isLoading"
+        style="text-align:center; margin-top: 20px; padding: 20px; background: #e8f4f8; border-radius: 8px;">
+        <p style="font-size: 16px;">🤖 Mô hình AI đang xử lý... Vui lòng đợi (30-60 giây)</p>
+        <p style="color: #666; font-size: 13px;">T5 Transformer đang tạo câu hỏi và đáp án nhiễu</p>
+    </div>
+
+    <!-- Error message -->
+    <div *ngIf="errorMessage"
+        style="text-align:center; margin-top: 20px; padding: 15px; background: #fde8e8; border-radius: 8px; color: #c0392b;">
+        ❌ {{ errorMessage }}
+    </div>
+
+    <div style="width: 1200px;" id="questionsBox" *ngIf="questions && questions.length > 0">
+        <div *ngFor="let question of questions; let i = index" class="card mb-3">
+            <h5 class="card-header">Câu hỏi {{i + 1}}</h5>
+
+            <div class="card-body">
+                <h6 class="card-title">{{question.questionText}}</h6>
+            </div>
+
+            <div *ngFor="let answer of question.answers" class="answerBox">
+                <input type="text" [value]="answer"
+                    [class]="answer === question.answerText ? 'form-control is-valid' : 'form-control is-invalid'"
+                    readonly>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- test yourself -->
+
+    <!-- <div id="questionsBox" *ngIf="questions">
+        <div *ngFor="let question of questions; let i = index">
+                <div class="questionBox" class="card mb-3">
+                        <h5 class="card-header">Question {{i + 1}}</h5>
+            
+                        <div class="card-body">
+                          <h6 class="card-title"> {{question.questionText}}</h6>
+                        </div>
+            
+            
+                        <div *ngFor='let answer of question.answers' class="answerBox">
+                            <button (click)="checkAnswer(question, answer)" type="button" class="btn btn-primary disabled">{{answer}}</button>
+                        </div>
+            
+            
+                </div>                        
+        </div>
+
+    </div> -->
+
+</div>

@@ -4,6 +4,8 @@ import toolz
 
 from app.modules.duplicate_removal import remove_distractors_duplicate_with_correct_answer, remove_duplicates
 from app.modules.text_cleaning import clean_text
+from app.modules.translator import detect_language, translate_to_english, translate_to_vietnamese
+from app.modules.answer_type import get_answer_type
 from app.ml_models.answer_generation.answer_generator import AnswerGenerator
 from app.ml_models.distractor_generation.distractor_generator import DistractorGenerator
 from app.ml_models.question_generation.question_generator import QuestionGenerator
@@ -11,6 +13,8 @@ from app.ml_models.sense2vec_distractor_generation.sense2vec_generation import S
 from app.models.question import Question
 
 import time
+
+REQUIRED_DISTRACTOR_COUNT = 3
 
 
 class MCQGenerator():
@@ -33,11 +37,20 @@ class MCQGenerator():
 
     # Main function
     def generate_mcq_questions(self, context: str, desired_count: int) -> List[Question]:
-        cleaned_text =  clean_text(context)
+        lang = detect_language(context)
+        print(f'[Language detected: {lang}]')
+
+        if lang == 'vi':
+            return self._generate_for_vietnamese(context, desired_count)
+        else:
+            return self._generate_for_english(context, desired_count)
+
+    def _generate_for_english(self, context: str, desired_count: int) -> List[Question]:
+        cleaned_text = clean_text(context)
 
         questions = self._generate_question_answer_pairs(cleaned_text, desired_count)
         questions = self._generate_distractors(cleaned_text, questions)
-        
+
         for question in questions:
             print('-------------------')
             print(question.answerText)
@@ -45,6 +58,22 @@ class MCQGenerator():
             print(question.distractors)
 
         return questions
+
+    def _generate_for_vietnamese(self, context_vi: str, desired_count: int) -> List[Question]:
+        print('[Vietnamese mode] Translating context to English...')
+        context_en = translate_to_english(context_vi)
+
+        # Generate MCQs in English
+        questions_en = self._generate_for_english(context_en, desired_count)
+
+        # Translate results back to Vietnamese
+        print('[Vietnamese mode] Translating results back to Vietnamese...')
+        for question in questions_en:
+            question.questionText = translate_to_vietnamese(question.questionText)
+            question.answerText = translate_to_vietnamese(question.answerText)
+            question.distractors = [translate_to_vietnamese(d) for d in question.distractors]
+
+        return questions_en
 
     def _generate_answers(self, context: str, desired_count: int) -> List[Question]:
         # answers = self.answer_generator.generate(context, desired_count)
@@ -79,21 +108,51 @@ class MCQGenerator():
         return questions
 
     def _generate_distractors(self, context: str, questions: List[Question]) -> List[Question]:
+        # Pre-compute answer types from question text for cross-question fallback
+        # Keyed by answerText for easy lookup; type derived from the question wording
+        answer_types = {q.answerText: get_answer_type(q.questionText) for q in questions}
+        all_answers = list(answer_types.keys())
+
         for question in questions:
-            t5_distractors =  self.distractor_generator.generate(5, question.answerText, question.questionText, context)
+            t5_distractors = self.distractor_generator.generate(5, question.answerText, question.questionText, context)
 
-            if len(t5_distractors) < 3:
-                s2v_distractors = self.sense2vec_distractor_generator.generate(question.answerText, 3)
-                distractors = t5_distractors + s2v_distractors
-            else:
-                distractors = t5_distractors
-
+            distractors = t5_distractors
+            if len(distractors) < REQUIRED_DISTRACTOR_COUNT:
+                # Supplement with sense2vec
+                needed = REQUIRED_DISTRACTOR_COUNT - len(distractors)
+                s2v_distractors = self.sense2vec_distractor_generator.generate(question.answerText, needed + 2)
+                distractors = distractors + s2v_distractors
 
             distractors = remove_duplicates(distractors)
             distractors = remove_distractors_duplicate_with_correct_answer(question.answerText, distractors)
-            #TODO - filter distractors having a similar bleu score with another distractor
 
-            question.distractors = distractors
+            # Type-aware cross-question fallback
+            if len(distractors) < REQUIRED_DISTRACTOR_COUNT:
+                current_type = get_answer_type(question.questionText)
+                # First try: only same-type answers from other questions
+                type_matched = [
+                    a for a in all_answers
+                    if a.lower() != question.answerText.lower()
+                    and a not in distractors
+                    and answer_types.get(a) == current_type
+                ]
+                distractors = distractors + type_matched
+                distractors = remove_duplicates(distractors)
+                distractors = remove_distractors_duplicate_with_correct_answer(question.answerText, distractors)
+
+            # Last resort: any cross-question answer (only if still short after type-matching)
+            if len(distractors) < REQUIRED_DISTRACTOR_COUNT:
+                any_cross = [
+                    a for a in all_answers
+                    if a.lower() != question.answerText.lower()
+                    and a not in distractors
+                ]
+                distractors = distractors + any_cross
+                distractors = remove_duplicates(distractors)
+                distractors = remove_distractors_duplicate_with_correct_answer(question.answerText, distractors)
+
+            # Always cap to exactly REQUIRED_DISTRACTOR_COUNT
+            question.distractors = distractors[:REQUIRED_DISTRACTOR_COUNT]
 
         return questions
 
