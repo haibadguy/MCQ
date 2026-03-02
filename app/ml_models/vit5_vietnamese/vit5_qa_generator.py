@@ -1,115 +1,125 @@
 """
 ViT5 Question-Answer Generator for Vietnamese
 =============================================
-Model: namngo/pipeline-vit5-viquad-qg
-  - Fine-tuned on ViQuAD + MLQA-vi
-  - Paper: "Towards Vietnamese Question and Answer Generation: An Empirical Study"
-    ACM TALLIP 2024 (Shaun-le/ViQAG)
+Kiến trúc giống Leaf/Tangsang English QA pipeline:
+  Input:  "[MASK] <sep> {context}"
+  Output: "{answer} <sep> {question}"
 
-Input format:  "generate question: <context>"
-               or end-to-end: the model generates "question: ... answer: ..."
+Model priority:
+  1. Local trained model (app/ml_models/vit5_vietnamese/qa_generator/)
+  2. HuggingFace public model (namngo/pipeline-vit5-viquad-qg)
 
-Output: List of (question, answer) tuples
+Train local:
+  python training/vn/prepare_dataset.py
+  python training/vn/train_vit5_qa.py
 """
 
-from typing import List, Tuple
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 import re
+from pathlib import Path
+from typing import Tuple, Optional
 
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
-MODEL_NAME = "namngo/pipeline-vit5-viquad-qg"
-
-# Parsing patterns for model output
-QA_SPLIT_PATTERN = re.compile(r'question:\s*(.+?)\s*answer:\s*(.+)', re.IGNORECASE | re.DOTALL)
-QUESTION_PATTERN = re.compile(r'question:\s*(.+)', re.IGNORECASE)
+# ── Constants (mirror Leaf/Tangsang English) ──────────────────────────────────
+SEP_TOKEN       = "<sep>"
+LOCAL_MODEL_DIR = "app/ml_models/vit5_vietnamese/qa_generator"
+HF_FALLBACK     = "namngo/pipeline-vit5-viquad-qg"
+SOURCE_MAX_LEN  = 512
+TARGET_MAX_LEN  = 80
 
 
 class ViT5QAGenerator:
     """
-    Wraps the namngo/pipeline-vit5-viquad-qg model to generate
-    Vietnamese question-answer pairs from a given context.
+    Vietnamese QA generator using the same two-stage format as Leaf English:
+      input  = "[MASK] <sep> {context}"
+      output = "{answer} <sep> {question}"
+
+    Falls back to HuggingFace model if local model not found.
     """
 
     def __init__(self, is_verbose: bool = False):
         self.is_verbose = is_verbose
-        if is_verbose:
-            print(f"[ViT5QAGenerator] Loading model: {MODEL_NAME}")
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
-        if is_verbose:
-            print(f"[ViT5QAGenerator] Model loaded successfully.")
+        self.tokenizer = None
+        self.model = None
+        self._model_name = None
+        self._load()
+
+    # ── Model loading ─────────────────────────────────────────────────────────
+
+    def _load(self):
+        local = Path(LOCAL_MODEL_DIR)
+        if local.exists() and any(local.iterdir()):
+            self._load_from(str(local), label="local trained")
+        else:
+            if self.is_verbose:
+                print(f"[ViT5QA] Local model not found at {local}")
+                print(f"[ViT5QA] Falling back to HuggingFace: {HF_FALLBACK}")
+                print("[ViT5QA] To train locally: python training/vn/train_vit5_qa.py")
+            self._load_from(HF_FALLBACK, label="HuggingFace")
+
+    def _load_from(self, model_path: str, label: str):
+        if self.is_verbose:
+            print(f"[ViT5QA] Loading {label} model: {model_path}")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+        # Ensure <sep> token is registered (needed if loading local model)
+        if SEP_TOKEN not in self.tokenizer.get_vocab():
+            self.tokenizer.add_tokens([SEP_TOKEN])
+        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        self.model.resize_token_embeddings(len(self.tokenizer))
+        self.model.eval()
+        self._model_name = model_path
+        if self.is_verbose:
+            print(f"[ViT5QA] ✓ Loaded from: {model_path}")
+
+    # ── Inference ─────────────────────────────────────────────────────────────
 
     def generate_qna(self, context: str) -> Tuple[str, str]:
         """
-        Generate a single (answer, question) pair from context.
-        Returns (answer, question) – same order as English pipeline.
+        Generate (answer, question) from context.
+        Returns (answer, question) — same order as English QuestionGenerator.
         """
-        prompt = f"generate question: {context}"
+        # Leaf/Tangsang format: "[MASK] <sep> {context}"
+        prompt = f"[MASK] {SEP_TOKEN} {context}"
         inputs = self.tokenizer(
             prompt,
-            return_tensors="pt",
-            max_length=512,
+            max_length=SOURCE_MAX_LEN,
+            padding="max_length",
             truncation=True,
-            padding=True
+            return_attention_mask=True,
+            return_tensors="pt"
         )
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=128,
+        generated_ids = self.model.generate(
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs["attention_mask"],
             num_beams=4,
-            early_stopping=True
+            max_length=TARGET_MAX_LEN,
+            repetition_penalty=2.5,
+            length_penalty=1.0,
+            early_stopping=True,
+            use_cache=True,
         )
-        decoded = self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+        decoded = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
 
         if self.is_verbose:
-            print(f"[ViT5QAGenerator] Raw output: {decoded}")
+            print(f"[ViT5QA] Raw output: {decoded}")
 
-        # Try parsing "question: ... answer: ..."
-        m = QA_SPLIT_PATTERN.search(decoded)
-        if m:
-            question = m.group(1).strip()
-            answer = m.group(2).strip()
+        # Parse "{answer} <sep> {question}" (Leaf format)
+        if SEP_TOKEN in decoded:
+            parts = decoded.split(SEP_TOKEN, 1)
+            answer   = parts[0].strip()
+            question = parts[1].strip() if len(parts) > 1 else ""
             return answer, question
 
-        # Fallback: treat full output as question, extract noun phrase as answer
-        question = decoded.strip()
-        answer = self._extract_answer_from_context(context)
-        return answer, question
+        # HuggingFace fallback model may produce different format
+        # Try "question: ... answer: ..."
+        m = re.search(r'question:\s*(.+?)\s*answer:\s*(.+)', decoded, re.IGNORECASE | re.DOTALL)
+        if m:
+            return m.group(2).strip(), m.group(1).strip()
 
-    def _extract_answer_from_context(self, context: str) -> str:
-        """Simple fallback: return first noun phrase (longest word sequence up to 5 tokens)."""
+        # Last resort: full output as question, first phrase as answer
+        return self._extract_answer(context), decoded.strip()
+
+    def _extract_answer(self, context: str) -> str:
+        """Fallback: return first 4 words as rough answer proxy."""
         words = context.split()
-        # Return first 3–5 words as a rough answer proxy
         return ' '.join(words[:4]) if len(words) >= 4 else context[:50]
-
-    def generate_multiple(self, context: str, num_return: int = 3) -> List[Tuple[str, str]]:
-        """
-        Generate multiple QA pairs using beam search diversity.
-        Returns list of (answer, question) tuples.
-        """
-        prompt = f"generate question: {context}"
-        inputs = self.tokenizer(
-            prompt,
-            return_tensors="pt",
-            max_length=512,
-            truncation=True,
-            padding=True
-        )
-        outputs = self.model.generate(
-            **inputs,
-            max_new_tokens=128,
-            num_beams=max(num_return * 2, 8),
-            num_return_sequences=num_return,
-            early_stopping=True
-        )
-        results = []
-        for output in outputs:
-            decoded = self.tokenizer.decode(output, skip_special_tokens=True)
-            m = QA_SPLIT_PATTERN.search(decoded)
-            if m:
-                question = m.group(1).strip()
-                answer = m.group(2).strip()
-                results.append((answer, question))
-            else:
-                answer = self._extract_answer_from_context(context)
-                results.append((answer, decoded.strip()))
-        return results

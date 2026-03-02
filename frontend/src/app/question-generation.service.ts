@@ -3,7 +3,7 @@ import { Observable, throwError } from 'rxjs';
 import { HttpClient, HttpHeaders, HttpErrorResponse } from '@angular/common/http';
 import { catchError } from 'rxjs/operators';
 
-import { Question } from './_models/quesiton';  
+import { Question } from './_models/quesiton';
 import { questionGenerationRequest } from './_models/questionGenerationRequest';
 
 @Injectable({
@@ -11,23 +11,35 @@ import { questionGenerationRequest } from './_models/questionGenerationRequest';
 })
 export class QuestionGenerationService {
 
-  private questionGenerationUrl = 'http://localhost:9002/generate';  // URL to web api
-  // private questionGenerationUrl = 'api/heroes';  // URL to web api
+  private baseUrl = 'http://localhost:9002';
+
   httpOptions = {
     headers: new HttpHeaders({ 'Content-Type': 'application/json' })
   };
 
-  constructor( private http: HttpClient ) { }
+  constructor(private http: HttpClient) { }
 
-  generate(req: questionGenerationRequest): Observable<Question[]> {
-    return this.http.post<Question[]>(this.questionGenerationUrl, req, this.httpOptions).pipe(
+  /** Generate MCQs from plain text */
+  generate(req: questionGenerationRequest): Observable<any[]> {
+    return this.http.post<any[]>(`${this.baseUrl}/generate`, req, this.httpOptions).pipe(
       catchError((error: HttpErrorResponse) => {
-        console.error('❌ Lỗi kết nối tới Backend:', error.message);
-        console.error('👉 Đảm bảo Flask đang chạy tại http://localhost:9002');
-        alert('Lỗi kết nối Backend! Đảm bảo python api_gateway.py đang chạy. Xem Console (F12) để biết chi tiết.');
+        console.error('❌ Lỗi kết nối Backend:', error.message);
         return throwError(error);
       })
     );
   }
 
+  /** Generate MCQs from a PDF file (multipart/form-data) */
+  generateFromPdf(file: File, count: number): Observable<any[]> {
+    const formData = new FormData();
+    formData.append('file', file, file.name);
+    formData.append('count', String(count));
+
+    return this.http.post<any[]>(`${this.baseUrl}/generate/pdf`, formData).pipe(
+      catchError((error: HttpErrorResponse) => {
+        console.error('❌ Lỗi PDF Backend:', error.message);
+        return throwError(error);
+      })
+    );
+  }
 }
