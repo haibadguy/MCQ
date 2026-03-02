@@ -1,0 +1,32 @@
+# requirements-vit5.txt
+# =====================
+# Additional dependencies for the Vietnamese ViT5 + PhoBERT pipeline (Option A).
+# Install AFTER the base requirements.txt in a fresh Python 3.9+ environment.
+#
+# IMPORTANT: The base requirements.txt pins transformers==4.3.0 and torch==1.9.1
+# which are too old for ViT5 models. The ViT5 pipeline requires a SEPARATE
+# virtual environment (Python 3.9+) or upgrading the base environment.
+#
+# Recommended setup:
+#   python -m venv venv_vit5
+#   pip install -r requirements-vit5.txt
+#   python -m app.ml_models.vit5_vietnamese.run_server  # (future: separate port)
+
+# Core ML (upgraded versions for ViT5)
+torch>=2.0.0
+transformers>=4.35.0
+tokenizers>=0.15.0
+sentencepiece>=0.1.99
+
+# PhoBERT embeddings
+# vinai/phobert-base-v2 loads via transformers (no extra install needed)
+
+# Vietnamese NLP (optional but improves sentence tokenization)
+underthesea>=6.8.0
+
+# Language detection (already in base requirements but listed for clarity)
+langdetect>=1.0.9
+
+# Utility
+numpy>=1.24.0
+tqdm>=4.65.0
